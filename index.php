@@ -75,6 +75,17 @@ foreach ($response['results'] as $result) {
     <link href="./bootstrap/bootstrap-5.3.3/css/bootstrap.min.css"
           rel="stylesheet">
   </head>
+  <script>
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches && document.getElementById("FollowDarkMode") ) {
+        document.documentElement.setAttribute('data-bs-theme', 'dark');
+        console.log('switching to dark theme');
+    }
+
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        document.documentElement.setAttribute('data-bs-theme', 'light');
+        console.log('switching to light theme');
+    }
+  </script>
   <body>
     <div class="container">
       <?php foreach($meetings as $period => $meetingsInPeriod): ?>
