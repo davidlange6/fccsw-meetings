@@ -1,69 +1,99 @@
 <?php
-$url = 'https://indico.cern.ch';
-$url = $url . '/export/categ/5666.json';
-$url = $url . '?from=today';
-$url = $url . '&order=start';
+$categoryUrl = 'https://indico.cern.ch/export/categ/5666.json?from=today&order=start';
+$response = json_decode(file_get_contents($categoryUrl), true);
 
-$response = json_decode(file_get_contents($url), true);
+// Additional specific Indico event IDs to include (fetched individually)
+$additionalEventIds = json_decode(file_get_contents(__DIR__ . '/extra_events.json'), true) ?? [];
 
-$meetings = array();
-$meetings['today'] = array();
-$meetings['this-week'] = array();
-$meetings['next-week'] = array();
-$meetings['this-month'] = array();
-$meetings['next-month'] = array();
+$meetings = [
+  'today'      => [],
+  'this-week'  => [],
+  'next-week'  => [],
+  'this-month' => [],
+  'next-month' => [],
+  'later'      => [],
+];
 $laterNextMonth = false;
-$laterThisWeek = false;
-foreach ($response['results'] as $result) {
-  $meeting = array();
+$titleCount = [];
+$seenIds = [];
 
-  // ID
-  $meeting['id'] = $result['id'];
-
-  // Title
-  $meeting['title'] = $result['title'];
-
-  // Description
-  $meeting['description'] = $result['description'];
-
-  // Start time
+function parseMeetingResult($result) {
   $startTime = new DateTime(
-    $result['startDate']['date'] . " " . $result['startDate']['time'],
+    $result['startDate']['date'] . ' ' . $result['startDate']['time'],
     new DateTimeZone($result['startDate']['tz'])
   );
-  $meeting['startTime'] = $startTime->format('Y M d, H:i T');
+  $meeting = [
+    'id'             => $result['id'],
+    'title'          => $result['title'],
+    'description'    => $result['description'],
+    'startTime'      => $startTime->format('Y M d, H:i T'),
+    'startTimestamp' => $startTime->getTimestamp(),
+    'url'            => $result['url'],
+    'location'       => empty($result['roomFullname']) ? $result['location'] : $result['roomFullname'],
+  ];
+  return [$meeting, $startTime];
+}
 
-  // URL
-  $meeting['url'] = $result['url'];
-
-  // Room
-  if (empty($result['roomFullname'])) {
-    $meeting['location'] = $result['location'];
-  } else {
-    $meeting['location'] = $result['roomFullname'];
-  }
-
-  // print_r($result);
-  // echo "<br><br><br><br>";
-  // if (($startTime->diff(new DateTime()))->format('%d') == 0) {
+function bucketForMeeting($startTime, &$laterNextMonth) {
   if (date('%Y-%W-%d') == $startTime->format('%Y-%W-%d')) {
-    array_push($meetings['today'], $meeting);
+    return 'today';
   } elseif (date('W') == $startTime->format('W')) {
-    array_push($meetings['this-week'], $meeting);
-    if ((date('m') + 1) == $startTime->format('m')) {
-      $laterNextMonth = true;
-    }
+    if ((date('m') + 1) == $startTime->format('m')) $laterNextMonth = true;
+    return 'this-week';
   } elseif ((date('W') + 1) == $startTime->format('W')) {
-    array_push($meetings['next-week'], $meeting);
-    if ((date('m') + 1) == $startTime->format('m')) {
-      $laterNextMonth = true;
-    }
+    if ((date('m') + 1) == $startTime->format('m')) $laterNextMonth = true;
+    return 'next-week';
   } elseif (date('m') == $startTime->format('m')) {
-    array_push($meetings['this-month'], $meeting);
+    return 'this-month';
   } elseif ((date('m') + 1) == $startTime->format('m')) {
-    array_push($meetings['next-month'], $meeting);
+    return 'next-month';
+  }
+  return 'later';
+}
+
+function tryAddMeeting($result, &$meetings, &$titleCount, &$seenIds, &$laterNextMonth) {
+  [$meeting, $startTime] = parseMeetingResult($result);
+
+  if (in_array($meeting['id'], $seenIds)) return;
+  $seenIds[] = $meeting['id'];
+
+  $title = $meeting['title'];
+  $titleCount[$title] = ($titleCount[$title] ?? 0) + 1;
+  if ($titleCount[$title] > 1) return;
+
+  $bucket = bucketForMeeting($startTime, $laterNextMonth);
+  if ($bucket !== null) {
+    $meetings[$bucket][] = $meeting;
   }
 }
+
+// Process category feed
+foreach ($response['results'] as $result) {
+  tryAddMeeting($result, $meetings, $titleCount, $seenIds, $laterNextMonth);
+}
+
+// Process additional events by ID (today or future only)
+$today = new DateTime('today');
+foreach ($additionalEventIds as $eventId) {
+  $eventUrl = 'https://indico.cern.ch/export/event/' . intval($eventId) . '.json';
+  $data = @file_get_contents($eventUrl);
+  if (!$data) continue;
+  $eventResponse = json_decode($data, true);
+  if (empty($eventResponse['results'])) continue;
+  $result = $eventResponse['results'][0];
+  $startTime = new DateTime(
+    $result['startDate']['date'] . ' ' . $result['startDate']['time'],
+    new DateTimeZone($result['startDate']['tz'])
+  );
+  if ($startTime < $today) continue;
+  tryAddMeeting($result, $meetings, $titleCount, $seenIds, $laterNextMonth);
+}
+
+// Sort each bucket by start time
+foreach ($meetings as &$bucket) {
+  usort($bucket, fn($a, $b) => $a['startTimestamp'] <=> $b['startTimestamp']);
+}
+unset($bucket);
 ?>
 
 <!doctype html>
@@ -115,6 +145,10 @@ foreach ($response['results'] as $result) {
       <?php else: ?>
       <h4 class="mt-3 mb-0">Next Month</h4>
       <?php endif ?>
+      <?php endif ?>
+
+      <?php if ($period == 'later' && count($meetingsInPeriod) > 0): ?>
+      <h4 class="mt-3 mb-0">Upcoming</h4>
       <?php endif ?>
 
       <?php foreach($meetingsInPeriod as $meeting): ?>
