@@ -3,7 +3,7 @@ $categoryUrl = 'https://indico.cern.ch/export/categ/5666.json?from=today&order=s
 $response = json_decode(file_get_contents($categoryUrl), true);
 
 // Additional specific Indico event IDs to include (fetched individually)
-$additionalEventIds = json_decode(file_get_contents(/eos/project/f/fccsw-web/www/fccsw-meetings/extra_events.json'), true) ?? [];
+$additionalEventIds = json_decode(@file_get_contents('/eos/project/f/fccsw-web/www/fccsw-meetings/extra_events.json'), true) ?? [];
 
 $meetings = [
   'today'      => [],
